@@ -1,6 +1,4 @@
-Plaintext
 streamlit
 pandas
 plotly
-gspread
-google-auth
+requests
