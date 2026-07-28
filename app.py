@@ -10,7 +10,7 @@ st.set_page_config(page_title="팀 예산 관리 시스템", page_icon="📊", l
 
 # 배포 후 발급받은 Apps Script Web App URL을 여기에 넣으세요. 
 # (Streamlit Secrets를 사용해도 되지만, 간편함을 위해 바로 적어도 됩니다)
-APPS_SCRIPT_URL = st.secrets.get("apps_script_url", "여기에_APPS_SCRIPT_URL을_입력하세요")
+APPS_SCRIPT_URL = st.secrets.get("apps_script_url", "https://docs.google.com/spreadsheets/d/1eDRHR3Jfd0P7hwmZy1d_Ncdb-AXhGhwe62lFaNKjF8s/edit?gid=0#gid=0")
 
 @st.cache_data(ttl=5) # 5초마다 데이터 갱신
 def get_data():
