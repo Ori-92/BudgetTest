@@ -1,42 +1,34 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import gspread
-from google.oauth2.service_account import Credentials
+import requests
 from datetime import datetime
 import uuid
 
 # 페이지 설정
 st.set_page_config(page_title="팀 예산 관리 시스템", page_icon="📊", layout="wide")
 
-# --- Google Sheets 연결 세팅 ---
-# Streamlit Cloud의 Secrets 기능을 사용해 보안 정보를 불러옵니다.
-@st.cache_resource
-def init_connection():
-    scope = ['https://www.googleapis.com/auth/spreadsheets']
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    client = gspread.authorize(creds)
-    return client
+# 배포 후 발급받은 Apps Script Web App URL을 여기에 넣으세요. 
+# (Streamlit Secrets를 사용해도 되지만, 간편함을 위해 바로 적어도 됩니다)
+APPS_SCRIPT_URL = st.secrets.get("apps_script_url", "여기에_APPS_SCRIPT_URL을_입력하세요")
 
-@st.cache_data(ttl=10) # 10초마다 캐시 갱신 (다중 사용자 환경 고려)
+@st.cache_data(ttl=5) # 5초마다 데이터 갱신
 def get_data():
     try:
-        client = init_connection()
-        sheet = client.open_by_url(st.secrets["gsheets_url"]).sheet1
-        records = sheet.get_all_records()
-        if not records:
-            return sheet, pd.DataFrame(columns=["ID", "날짜", "팀원", "항목", "금액"])
-        return sheet, pd.DataFrame(records)
+        response = requests.get(APPS_SCRIPT_URL)
+        data = response.json()
+        if not data:
+            return pd.DataFrame(columns=["ID", "날짜", "팀원", "항목", "금액"])
+        return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"Google Sheets 연결에 실패했습니다: {e}")
-        st.stop()
+        st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
+        return pd.DataFrame(columns=["ID", "날짜", "팀원", "항목", "금액"])
 
-# 데이터 불러오기
-sheet, df = get_data()
+df = get_data()
 
 # --- 헤더 ---
 st.markdown("<h1 style='text-align: center;'>📊 팀 예산 관리 시스템</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: gray;'>부장님 보고용 월별 예산 취합 및 대시보드</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: gray;'>부장님 보고용 월별 예산 취합 및 대시보드 (Apps Script 연동)</p>", unsafe_allow_html=True)
 st.write("---")
 
 # --- 탭 구성 ---
@@ -51,7 +43,6 @@ with tab1:
         with st.form("budget_form", clear_on_submit=True):
             member = st.selectbox("팀원 선택", ["부장님", "팀원1", "팀원2", "팀원3", "팀원4"])
             
-            # 현재 연-월을 기본값으로 하는 날짜 입력
             current_month = datetime.now().strftime("%Y-%m")
             month = st.text_input("해당 월 (YYYY-MM 형식)", value=current_month)
             
@@ -63,12 +54,19 @@ with tab1:
             if submit_button:
                 if amount > 0:
                     new_row = [str(uuid.uuid4())[:8], month, member, category, amount]
+                    payload = {
+                        "action": "append",
+                        "row": new_row
+                    }
                     try:
-                        # 시트에 데이터 추가 (헤더가 첫 줄에 있다고 가정)
-                        sheet.append_row(new_row)
-                        st.success("✅ 예산 데이터가 정상적으로 기록되었습니다.")
-                        st.cache_data.clear() # 캐시 초기화하여 새로고침 유도
-                        st.rerun()
+                        # Apps Script로 데이터 전송 (POST)
+                        response = requests.post(APPS_SCRIPT_URL, json=payload)
+                        if response.status_code == 200:
+                            st.success("✅ 예산 데이터가 정상적으로 기록되었습니다.")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("저장 실패 (서버 응답 오류)")
                     except Exception as e:
                         st.error(f"저장 중 오류 발생: {e}")
                 else:
@@ -77,20 +75,21 @@ with tab1:
     with col2:
         st.subheader("📂 최근 입력 내역")
         if not df.empty:
-            # 테이블 가독성을 위해 최신순으로 정렬 후 금액 포맷팅
             display_df = df.copy()
-            display_df = display_df.iloc[::-1] # 역순 (최신이 위로)
-            display_df['금액'] = display_df['금액'].apply(lambda x: f"{int(x):,}원")
+            display_df = display_df.iloc[::-1]
+            # 금액에 콤마 추가 (숫자형 변환 후)
+            display_df['금액'] = pd.to_numeric(display_df['금액'], errors='coerce').fillna(0)
+            display_df['금액_표시'] = display_df['금액'].apply(lambda x: f"{int(x):,}원")
             
             st.dataframe(
-                display_df[["날짜", "팀원", "항목", "금액"]], 
+                display_df[["날짜", "팀원", "항목", "금액_표시"]].rename(columns={"금액_표시": "금액"}), 
                 use_container_width=True, 
                 hide_index=True
             )
             
             if st.button("🚨 모든 데이터 초기화 (위험)", type="secondary"):
-                # 헤더만 남기고 데이터 모두 삭제
-                sheet.resize(1)
+                payload = {"action": "clear"}
+                requests.post(APPS_SCRIPT_URL, json=payload)
                 st.cache_data.clear()
                 st.rerun()
         else:
@@ -101,10 +100,8 @@ with tab2:
     if df.empty:
         st.warning("데이터가 없어 대시보드를 표시할 수 없습니다. 먼저 데이터를 입력해주세요.")
     else:
-        # 데이터 타입 변환 방어코드
         df['금액'] = pd.to_numeric(df['금액'], errors='coerce').fillna(0)
         
-        # 1. 요약 지표 (Metrics)
         total_amount = df['금액'].sum()
         top_category = df.groupby('항목')['금액'].sum().idxmax()
         top_category_amount = df.groupby('항목')['금액'].sum().max()
@@ -117,7 +114,6 @@ with tab2:
         
         st.write("---")
         
-        # 2. 차트 (Charts)
         c1, c2 = st.columns(2)
         
         with c1:
@@ -135,13 +131,11 @@ with tab2:
             fig_bar.update_traces(textposition='outside')
             st.plotly_chart(fig_bar, use_container_width=True)
             
-        # 3. 월별/항목별 요약 테이블 (Pivot Table)
         st.subheader("📅 월별/항목별 요약 테이블 (취합본)")
         pivot_df = pd.pivot_table(df, values='금액', index='날짜', columns='항목', aggfunc='sum', fill_value=0)
         pivot_df['합계'] = pivot_df.sum(axis=1)
-        pivot_df = pivot_df.sort_index(ascending=False) # 최신 월이 위로 오게
+        pivot_df = pivot_df.sort_index(ascending=False)
         
-        # 스타일링 및 콤마 포맷팅
         st.dataframe(
             pivot_df.style.format("{:,.0f}"), 
             use_container_width=True
