@@ -4,6 +4,7 @@ import plotly.express as px
 import requests
 from datetime import datetime
 import uuid
+import google.generativeai as genai
 
 # 페이지 설정
 st.set_page_config(page_title="팀 예산 관리 시스템", page_icon="📊", layout="wide")
@@ -145,14 +146,13 @@ with tab2:
 
 
 
-# --- TAB 3: 기간별 보고서 (자동 작성 기능 추가) ---
+# --- TAB 3: 기간별 보고서 (Gemini AI 자동 작성 기능 적용) ---
 with tab3:
-    st.subheader("📑 기간별 예산 보고서 작성")
+    st.subheader("📑 기간별 예산 보고서 작성 (AI 어시스턴트)")
     
     if df.empty:
         st.warning("데이터가 없어 보고서를 작성할 수 없습니다. 먼저 데이터를 입력해주세요.")
     else:
-        # 보고서 임시 저장을 위한 세션 상태(Session State) 초기화
         if 'reports' not in st.session_state:
             st.session_state.reports = {}
 
@@ -162,62 +162,76 @@ with tab3:
         
         # 2. 선택한 기간의 예산 요약 데이터 계산
         month_df = df[df['날짜'] == selected_month]
-        # 금액 데이터를 숫자형으로 안전하게 변환
         month_df.loc[:, '금액'] = pd.to_numeric(month_df['금액'], errors='coerce').fillna(0)
         month_total = month_df['금액'].sum()
         
-        # 요약 정보 표시
         st.info(f"💡 **{selected_month}** 총 사용 금액: **{int(month_total):,}원** ({len(month_df)}건)")
         
-        # 🌟 새로 추가된 '현황 자동 작성' 버튼
-        if st.button("🤖 현황 자동 작성 (초안 만들기)", help="현재 월의 데이터를 분석하여 요약 보고서 초안을 작성합니다."):
+        # 🌟 Gemini AI를 활용한 보고서 생성 버튼
+        if st.button("✨ AI로 부장님 보고용 초안 작성하기", type="primary"):
             if month_df.empty:
                 st.warning("해당 월에는 데이터가 없습니다.")
             else:
-                # 데이터 분석 로직
-                top_category = month_df.groupby('항목')['금액'].sum().idxmax()
-                top_category_amt = month_df.groupby('항목')['금액'].sum().max()
-                
-                top_member = month_df.groupby('팀원')['금액'].sum().idxmax()
-                top_member_amt = month_df.groupby('팀원')['금액'].sum().max()
-                
-                # 항목별 세부 내역 텍스트 생성
-                cat_summary = month_df.groupby('항목')['금액'].sum()
-                cat_text_list = [f"  • {k}: {int(v):,}원" for k, v in cat_summary.items()]
-                cat_text = "\n".join(cat_text_list)
-                
-                # 초안 텍스트 생성
-                auto_report_text = f"""[ {selected_month} 예산 현황 요약 ]
+                with st.spinner("구글 AI가 데이터를 분석하여 보고서를 작성 중입니다... ⏳"):
+                    try:
+                        # 1) Gemini API 키 설정 (Secrets에서 불러오기)
+                        GEMINI_API_KEY = st.secrets["gemini_api_key"]
+                        genai.configure(api_key=GEMINI_API_KEY)
+                        
+                        # 최신 Gemini 1.5 Flash 모델 사용 (속도 빠름)
+                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        
+                        # 2) AI에게 전달할 데이터 텍스트화
+                        cat_summary = month_df.groupby('항목')['금액'].sum()
+                        cat_text = "\n".join([f"- {k}: {int(v):,}원" for k, v in cat_summary.items()])
+                        
+                        mem_summary = month_df.groupby('팀원')['금액'].sum()
+                        mem_text = "\n".join([f"- {k}: {int(v):,}원" for k, v in mem_summary.items()])
+                        
+                        # 3) AI에게 지시할 프롬프트(명령어) 작성
+                        prompt = f"""
+                        당신은 전문적이고 센스 있는 예산 관리자입니다. 
+                        아래의 {selected_month} 팀 예산 사용 데이터를 바탕으로 부장님께 보고할 '월간 예산 현황 보고서' 초안을 작성해주세요.
 
-1. 전체 요약
-  • 총 사용 금액: {int(month_total):,}원 (총 {len(month_df)}건)
-  • 최대 지출 항목: {top_category} ({int(top_category_amt):,}원)
-  • 최다 지출 팀원: {top_member} ({int(top_member_amt):,}원)
-  
-2. 항목별 지출 세부 내역
-{cat_text}
+                        [데이터 요약]
+                        - 총 사용 금액: {int(month_total):,}원
+                        - 총 지출 건수: {len(month_df)}건
+                        
+                        [항목별 지출]
+                        {cat_text}
+                        
+                        [팀원별 지출]
+                        {mem_text}
 
-3. 종합 의견 (아래 내용을 수정하여 사용하세요)
-  • 이번 달은 '{top_category}' 항목의 지출 비중이 가장 높습니다. 
-  • 차월 예산 편성 시 해당 항목의 예산 배정을 우선적으로 검토할 필요가 있습니다.
-"""
-                # 세션 상태에 초안 덮어쓰기 후 화면 새로고침
-                st.session_state.reports[selected_month] = auto_report_text
-                st.rerun()
+                        [작성 가이드]
+                        1. 보고서 제목을 정중하게 작성해주세요.
+                        2. 전체 요약, 주요 지출 분석, 향후 예산 운영 의견(인사이트)의 구조로 나누어 작성해주세요.
+                        3. 어투는 '~습니다', '~합니다' 형태의 비즈니스 보고서 톤(부장님 보고용)으로 해주세요.
+                        4. 줄글로만 쓰지 말고 글머리 기호 등을 적절히 섞어서 가독성 좋게 마크다운으로 작성해주세요.
+                        """
+                        
+                        # 4) AI 답변 생성 요청
+                        response = model.generate_content(prompt)
+                        
+                        # 세션 상태에 초안 덮어쓰기 후 새로고침
+                        st.session_state.reports[selected_month] = response.text
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"AI 보고서 생성 중 오류가 발생했습니다. API 키 설정 등을 확인해주세요. (에러: {e})")
 
         # 3. 보고서 작성 및 수정 폼
         with st.form(f"report_form_{selected_month}"):
             existing_report = st.session_state.reports.get(selected_month, "")
             
             report_content = st.text_area(
-                "📝 보고서 내용 작성", 
+                "📝 보고서 내용 수정 및 완성", 
                 value=existing_report, 
-                height=300, 
-                placeholder="해당 월의 주요 예산 사용 내역, 특이사항, 절감 방안 등을 자유롭게 작성해주세요."
+                height=400, 
+                placeholder="AI가 작성한 초안을 바탕으로 내용을 수정하거나 직접 보고서를 작성하세요."
             )
             
-            # 저장/수정 버튼
-            submit_report = st.form_submit_button("보고서 저장 / 수정", type="primary", use_container_width=True)
+            submit_report = st.form_submit_button("최종 보고서 저장", use_container_width=True)
             
             if submit_report:
                 if report_content.strip():
@@ -230,9 +244,13 @@ with tab3:
         # 4. 저장된 보고서 출력 (미리보기)
         if st.session_state.reports.get(selected_month):
             st.write("---")
-            st.subheader(f"📄 {selected_month} 예산 현황 보고서")
+            st.subheader(f"📄 {selected_month} 예산 현황 최종 보고서")
             
             st.markdown(f"""
+            <div style='background-color: white; padding: 30px; border-radius: 10px; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
+                {st.session_state.reports[selected_month]}
+            </div>
+            """, unsafe_allow_html=True)
             <div style='background-color: white; padding: 20px; border-radius: 10px; border: 1px solid #e5e7eb;'>
                 <pre style='font-family: inherit; white-space: pre-wrap; margin: 0;'>{st.session_state.reports[selected_month]}</pre>
             </div>
