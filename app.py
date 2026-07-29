@@ -140,3 +140,74 @@ with tab2:
             pivot_df.style.format("{:,.0f}"), 
             use_container_width=True
         )
+
+# --- 탭 구성 ---
+# 기존 2개 탭에서 3개 탭으로 변경합니다.
+tab1, tab2, tab3 = st.tabs(["📝 데이터 입력", "📈 전체 대시보드", "📑 기간별 보고서"])
+
+# --- TAB 1: 데이터 입력 ---
+# (이 부분은 기존 코드와 동일하게 유지합니다)
+# ... [기존 TAB 1 코드] ...
+
+# --- TAB 2: 전체 대시보드 ---
+# (이 부분은 기존 코드와 동일하게 유지합니다)
+# ... [기존 TAB 2 코드] ...
+
+# --- TAB 3: 기간별 보고서 (새로 추가된 기능) ---
+with tab3:
+    st.subheader("📑 기간별 예산 보고서 작성")
+    
+    if df.empty:
+        st.warning("데이터가 없어 보고서를 작성할 수 없습니다. 먼저 데이터를 입력해주세요.")
+    else:
+        # 보고서 임시 저장을 위한 세션 상태(Session State) 초기화
+        if 'reports' not in st.session_state:
+            st.session_state.reports = {}
+
+        # 1. 기간(월) 선택 기능
+        # 데이터에 있는 월(YYYY-MM)만 중복 없이 최신순으로 가져옵니다.
+        unique_months = sorted(df['날짜'].unique(), reverse=True)
+        selected_month = st.selectbox("보고서를 작성/조회할 기간(월)을 선택하세요:", unique_months)
+        
+        # 2. 선택한 기간의 예산 요약 데이터 계산
+        month_df = df[df['날짜'] == selected_month]
+        month_total = month_df['금액'].sum()
+        
+        # 요약 정보 표시
+        st.info(f"💡 **{selected_month}** 총 사용 금액: **{int(month_total):,}원** ({len(month_df)}건)")
+        
+        # 3. 보고서 작성 및 수정 폼
+        with st.form(f"report_form_{selected_month}"):
+            # 기존에 작성해둔 보고서가 있다면 텍스트 창에 불러옵니다.
+            existing_report = st.session_state.reports.get(selected_month, "")
+            
+            report_content = st.text_area(
+                "📝 보고서 내용 작성", 
+                value=existing_report, 
+                height=200, 
+                placeholder="해당 월의 주요 예산 사용 내역, 특이사항, 절감 방안 등을 자유롭게 작성해주세요."
+            )
+            
+            # 저장/수정 버튼
+            submit_report = st.form_submit_button("보고서 저장 / 수정", type="primary", use_container_width=True)
+            
+            if submit_report:
+                # 텍스트가 있을 때만 저장
+                if report_content.strip():
+                    st.session_state.reports[selected_month] = report_content
+                    st.success(f"✅ {selected_month} 예산 보고서가 저장되었습니다!")
+                else:
+                    st.warning("보고서 내용을 입력해주세요.")
+                st.rerun()
+
+        # 4. 저장된 보고서 출력 (미리보기)
+        if st.session_state.reports.get(selected_month):
+            st.write("---")
+            st.subheader(f"📄 {selected_month} 예산 현황 보고서")
+            
+            # 작성된 내용을 마크다운 형태로 깔끔하게 렌더링
+            st.markdown(f"""
+            <div style='background-color: white; padding: 20px; border-radius: 10px; border: 1px solid #e5e7eb;'>
+                {st.session_state.reports[selected_month]}
+            </div>
+            """, unsafe_allow_html=True)
