@@ -146,7 +146,7 @@ with tab2:
 
 
 
-# --- TAB 3: 기간별 보고서 (Gemini AI 자동 작성 기능 적용) ---
+# --- TAB 3: 기간별 보고서 (앱스 스크립트의 gemini 함수 연동) ---
 with tab3:
     st.subheader("📑 기간별 예산 보고서 작성 (AI 어시스턴트)")
     
@@ -167,58 +167,59 @@ with tab3:
         
         st.info(f"💡 **{selected_month}** 총 사용 금액: **{int(month_total):,}원** ({len(month_df)}건)")
         
-        # 🌟 Gemini AI를 활용한 보고서 생성 버튼
+        # 🌟 앱스 스크립트로 AI 보고서 요청하기
         if st.button("✨ AI로 부장님 보고용 초안 작성하기", type="primary"):
             if month_df.empty:
                 st.warning("해당 월에는 데이터가 없습니다.")
             else:
-                with st.spinner("구글 AI가 데이터를 분석하여 보고서를 작성 중입니다... ⏳"):
+                with st.spinner("구글 서버의 AI가 보고서를 작성 중입니다... ⏳"):
+                    # 통계를 텍스트로 변환
+                    cat_summary = month_df.groupby('항목')['금액'].sum()
+                    cat_text = "\n".join([f"- {k}: {int(v):,}원" for k, v in cat_summary.items()])
+                    
+                    mem_summary = month_df.groupby('팀원')['금액'].sum()
+                    mem_text = "\n".join([f"- {k}: {int(v):,}원" for k, v in mem_summary.items()])
+                    
+                    # 파이썬이 작성한 프롬프트 (질문 내용)
+                    prompt = f"""
+                    당신은 전문적이고 센스 있는 예산 관리자입니다. 
+                    아래의 {selected_month} 팀 예산 사용 데이터를 바탕으로 부장님께 보고할 '월간 예산 현황 보고서' 초안을 작성해주세요.
+
+                    [데이터 요약]
+                    - 총 사용 금액: {int(month_total):,}원
+                    - 총 지출 건수: {len(month_df)}건
+                    
+                    [항목별 지출]
+                    {cat_text}
+                    
+                    [팀원별 지출]
+                    {mem_text}
+
+                    [작성 가이드]
+                    1. 전체 요약, 주요 지출 분석, 향후 예산 운영 의견으로 구조화해주세요.
+                    2. 어투는 '~습니다', '~합니다' 형태의 비즈니스 보고서 톤으로 해주세요.
+                    3. 마크다운을 적절히 섞어서 가독성 좋게 작성해주세요.
+                    """
+                    
+                    # 앱스 스크립트로 프롬프트 전송
+                    payload = {
+                        "action": "generate_report",
+                        "prompt": prompt
+                    }
+                    
                     try:
-                        # 1) Gemini API 키 설정 (Secrets에서 불러오기)
-                        GEMINI_API_KEY = st.secrets["gemini_api_key"]
-                        genai.configure(api_key=GEMINI_API_KEY)
+                        response = requests.post(APPS_SCRIPT_URL, json=payload)
+                        result = response.json()
                         
-                        # 최신 Gemini 1.5 Flash 모델 사용 (속도 빠름)
-                        model = genai.GenerativeModel('gemini-1.5-flash')
-                        
-                        # 2) AI에게 전달할 데이터 텍스트화
-                        cat_summary = month_df.groupby('항목')['금액'].sum()
-                        cat_text = "\n".join([f"- {k}: {int(v):,}원" for k, v in cat_summary.items()])
-                        
-                        mem_summary = month_df.groupby('팀원')['금액'].sum()
-                        mem_text = "\n".join([f"- {k}: {int(v):,}원" for k, v in mem_summary.items()])
-                        
-                        # 3) AI에게 지시할 프롬프트(명령어) 작성
-                        prompt = f"""
-                        당신은 전문적이고 센스 있는 예산 관리자입니다. 
-                        아래의 {selected_month} 팀 예산 사용 데이터를 바탕으로 부장님께 보고할 '월간 예산 현황 보고서' 초안을 작성해주세요.
-
-                        [데이터 요약]
-                        - 총 사용 금액: {int(month_total):,}원
-                        - 총 지출 건수: {len(month_df)}건
-                        
-                        [항목별 지출]
-                        {cat_text}
-                        
-                        [팀원별 지출]
-                        {mem_text}
-
-                        [작성 가이드]
-                        1. 보고서 제목을 정중하게 작성해주세요.
-                        2. 전체 요약, 주요 지출 분석, 향후 예산 운영 의견(인사이트)의 구조로 나누어 작성해주세요.
-                        3. 어투는 '~습니다', '~합니다' 형태의 비즈니스 보고서 톤(부장님 보고용)으로 해주세요.
-                        4. 줄글로만 쓰지 말고 글머리 기호 등을 적절히 섞어서 가독성 좋게 마크다운으로 작성해주세요.
-                        """
-                        
-                        # 4) AI 답변 생성 요청
-                        response = model.generate_content(prompt)
-                        
-                        # 세션 상태에 초안 덮어쓰기 후 새로고침
-                        st.session_state.reports[selected_month] = response.text
-                        st.rerun()
-                        
+                        if result.get("status") == "success":
+                            # 앱스 스크립트가 보내준 답변을 세션에 저장
+                            st.session_state.reports[selected_month] = result.get("report")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ 오류가 발생했습니다: {result.get('message', '알 수 없는 오류')}")
+                            
                     except Exception as e:
-                        st.error(f"AI 보고서 생성 중 오류가 발생했습니다. API 키 설정 등을 확인해주세요. (에러: {e})")
+                        st.error(f"❌ 앱스 스크립트와 통신 실패: {e}")
 
         # 3. 보고서 작성 및 수정 폼
         with st.form(f"report_form_{selected_month}"):
@@ -249,9 +250,5 @@ with tab3:
             st.markdown(f"""
             <div style='background-color: white; padding: 30px; border-radius: 10px; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
                 {st.session_state.reports[selected_month]}
-            </div>
-            """, unsafe_allow_html=True)
-            <div style='background-color: white; padding: 20px; border-radius: 10px; border: 1px solid #e5e7eb;'>
-                <pre style='font-family: inherit; white-space: pre-wrap; margin: 0;'>{st.session_state.reports[selected_month]}</pre>
             </div>
             """, unsafe_allow_html=True)
