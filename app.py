@@ -145,7 +145,7 @@ with tab2:
 
 
 
-# --- TAB 3: 기간별 보고서 (새로 추가된 기능) ---
+# --- TAB 3: 기간별 보고서 (자동 작성 기능 추가) ---
 with tab3:
     st.subheader("📑 기간별 예산 보고서 작성")
     
@@ -157,26 +157,62 @@ with tab3:
             st.session_state.reports = {}
 
         # 1. 기간(월) 선택 기능
-        # 데이터에 있는 월(YYYY-MM)만 중복 없이 최신순으로 가져옵니다.
         unique_months = sorted(df['날짜'].unique(), reverse=True)
         selected_month = st.selectbox("보고서를 작성/조회할 기간(월)을 선택하세요:", unique_months)
         
         # 2. 선택한 기간의 예산 요약 데이터 계산
         month_df = df[df['날짜'] == selected_month]
+        # 금액 데이터를 숫자형으로 안전하게 변환
+        month_df.loc[:, '금액'] = pd.to_numeric(month_df['금액'], errors='coerce').fillna(0)
         month_total = month_df['금액'].sum()
         
         # 요약 정보 표시
         st.info(f"💡 **{selected_month}** 총 사용 금액: **{int(month_total):,}원** ({len(month_df)}건)")
         
+        # 🌟 새로 추가된 '현황 자동 작성' 버튼
+        if st.button("🤖 현황 자동 작성 (초안 만들기)", help="현재 월의 데이터를 분석하여 요약 보고서 초안을 작성합니다."):
+            if month_df.empty:
+                st.warning("해당 월에는 데이터가 없습니다.")
+            else:
+                # 데이터 분석 로직
+                top_category = month_df.groupby('항목')['금액'].sum().idxmax()
+                top_category_amt = month_df.groupby('항목')['금액'].sum().max()
+                
+                top_member = month_df.groupby('팀원')['금액'].sum().idxmax()
+                top_member_amt = month_df.groupby('팀원')['금액'].sum().max()
+                
+                # 항목별 세부 내역 텍스트 생성
+                cat_summary = month_df.groupby('항목')['금액'].sum()
+                cat_text_list = [f"  • {k}: {int(v):,}원" for k, v in cat_summary.items()]
+                cat_text = "\n".join(cat_text_list)
+                
+                # 초안 텍스트 생성
+                auto_report_text = f"""[ {selected_month} 예산 현황 요약 ]
+
+1. 전체 요약
+  • 총 사용 금액: {int(month_total):,}원 (총 {len(month_df)}건)
+  • 최대 지출 항목: {top_category} ({int(top_category_amt):,}원)
+  • 최다 지출 팀원: {top_member} ({int(top_member_amt):,}원)
+  
+2. 항목별 지출 세부 내역
+{cat_text}
+
+3. 종합 의견 (아래 내용을 수정하여 사용하세요)
+  • 이번 달은 '{top_category}' 항목의 지출 비중이 가장 높습니다. 
+  • 차월 예산 편성 시 해당 항목의 예산 배정을 우선적으로 검토할 필요가 있습니다.
+"""
+                # 세션 상태에 초안 덮어쓰기 후 화면 새로고침
+                st.session_state.reports[selected_month] = auto_report_text
+                st.rerun()
+
         # 3. 보고서 작성 및 수정 폼
         with st.form(f"report_form_{selected_month}"):
-            # 기존에 작성해둔 보고서가 있다면 텍스트 창에 불러옵니다.
             existing_report = st.session_state.reports.get(selected_month, "")
             
             report_content = st.text_area(
                 "📝 보고서 내용 작성", 
                 value=existing_report, 
-                height=200, 
+                height=300, 
                 placeholder="해당 월의 주요 예산 사용 내역, 특이사항, 절감 방안 등을 자유롭게 작성해주세요."
             )
             
@@ -184,7 +220,6 @@ with tab3:
             submit_report = st.form_submit_button("보고서 저장 / 수정", type="primary", use_container_width=True)
             
             if submit_report:
-                # 텍스트가 있을 때만 저장
                 if report_content.strip():
                     st.session_state.reports[selected_month] = report_content
                     st.success(f"✅ {selected_month} 예산 보고서가 저장되었습니다!")
@@ -197,9 +232,8 @@ with tab3:
             st.write("---")
             st.subheader(f"📄 {selected_month} 예산 현황 보고서")
             
-            # 작성된 내용을 마크다운 형태로 깔끔하게 렌더링
             st.markdown(f"""
             <div style='background-color: white; padding: 20px; border-radius: 10px; border: 1px solid #e5e7eb;'>
-                {st.session_state.reports[selected_month]}
+                <pre style='font-family: inherit; white-space: pre-wrap; margin: 0;'>{st.session_state.reports[selected_month]}</pre>
             </div>
             """, unsafe_allow_html=True)
