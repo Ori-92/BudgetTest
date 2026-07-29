@@ -5,6 +5,8 @@ import requests
 from datetime import datetime
 import uuid
 import google.generativeai as genai
+from docx import Document
+from io import BytesIO
 
 # 페이지 설정
 st.set_page_config(page_title="팀 예산 관리 시스템", page_icon="📊", layout="wide")
@@ -242,13 +244,37 @@ with tab3:
                     st.warning("보고서 내용을 입력해주세요.")
                 st.rerun()
 
-        # 4. 저장된 보고서 출력 (미리보기)
+        # 4. 저장된 보고서 출력 (미리보기) 및 워드 다운로드 기능
         if st.session_state.reports.get(selected_month):
             st.write("---")
             st.subheader(f"📄 {selected_month} 예산 현황 최종 보고서")
             
+            final_report_text = st.session_state.reports[selected_month]
+            
+            # 미리보기 화면
             st.markdown(f"""
-            <div style='background-color: white; padding: 30px; border-radius: 10px; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
-                {st.session_state.reports[selected_month]}
+            <div style='background-color: white; padding: 30px; border-radius: 10px; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px;'>
+                <pre style='font-family: inherit; white-space: pre-wrap; margin: 0;'>{final_report_text}</pre>
             </div>
             """, unsafe_allow_html=True)
+            
+            # --- 워드 파일(.docx) 생성 로직 ---
+            doc = Document()
+            # 워드 문서 제목 추가
+            doc.add_heading(f"{selected_month} 예산 현황 보고서", level=0)
+            # 워드 문서 본문(보고서 내용) 추가
+            doc.add_paragraph(final_report_text)
+            
+            # 문서를 메모리 버퍼에 저장 (파일을 서버에 물리적으로 저장하지 않음)
+            buffer = BytesIO()
+            doc.save(buffer)
+            buffer.seek(0)
+            
+            # 다운로드 버튼 생성
+            st.download_button(
+                label="💾 워드 파일(.docx)로 다운로드",
+                data=buffer,
+                file_name=f"{selected_month}_예산보고서.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True
+            )
